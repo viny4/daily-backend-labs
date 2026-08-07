@@ -19,6 +19,15 @@ Requirements:
 - Vary the difficulty day to day. Roughly: 30% straightforward, 50% moderate,
   20% genuinely hard.
 
+## Already covered — do not repeat these
+
+The following challenges have already been set. Do not reuse their scenario,
+their core problem, or a thin restatement of either. If the topic overlaps,
+approach it from a genuinely different angle: a different failure mode, a
+different layer of the stack, a different scale, or the opposite trade-off.
+
+{{RECENT}}
+
 Hard rules:
 
 - **Do not provide the solution, or any part of it.** No schema, no code, no
