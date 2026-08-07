@@ -82,6 +82,22 @@ ids it prints.
 The schedule is `30 3 * * *` (03:30 UTC = 09:00 IST). GitHub's cron is
 best-effort and can lag under load, so treat it as "some time in the morning".
 
+## How duplicates are prevented
+
+Three separate guards, because the model has no memory and the workflow can be
+re-run at any time:
+
+| Risk | Guard |
+| --- | --- |
+| Two challenges for the same date | The generator exits if `challenges/YYYY-MM-DD.md` already exists on the default branch |
+| Two PRs for the same date | The workflow checks for an existing `challenge/YYYY-MM-DD` branch — before calling the API, so a re-run costs nothing |
+| **The same problem set twice on different dates** | The last 40 challenges are summarised into the prompt as a "do not repeat these" list |
+
+The third is the one that actually matters over a year. Without it the model
+would happily reissue "the invoices table got slow, design the indexes" every
+few Mondays, because each run is a blank slate. Feeding the history back in is
+what keeps a 365-day series varied.
+
 ## What this is not
 
 It is not a contribution-graph generator. The scheduled job creates a question

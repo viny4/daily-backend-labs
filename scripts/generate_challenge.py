@@ -58,11 +58,62 @@ def topic_for(day: datetime) -> str:
     return WEEKLY_TOPICS[day.weekday()]
 
 
+def recent_challenges(limit: int = 40) -> list[str]:
+    """One-line summaries of the most recent challenges already in the repo.
+
+    The model has no memory between runs, so without this it happily reissues
+    "the invoices table got slow, design the indexes" every few Mondays. Feeding
+    the recent history back in is the only thing that makes the series varied.
+
+    Reads what is committed on disk, which after actions/checkout is exactly
+    what is on the default branch.
+    """
+    if not CHALLENGES.is_dir():
+        return []
+
+    summaries: list[str] = []
+
+    # Filenames are ISO dates, so a plain reverse sort is newest-first.
+    for path in sorted(CHALLENGES.glob("*.md"), reverse=True)[:limit]:
+        lines = path.read_text().splitlines()
+
+        title = next((ln.lstrip("# ").strip() for ln in lines if ln.startswith("# ")), path.stem)
+
+        # First non-empty line under "## Scenario" — enough to identify the
+        # problem without spending the whole prompt budget on history.
+        scenario = ""
+        for index, line in enumerate(lines):
+            if line.strip().lower().startswith("## scenario"):
+                for following in lines[index + 1 :]:
+                    if following.strip():
+                        scenario = following.strip()
+                        break
+                break
+
+        if scenario:
+            summaries.append(f"- {title}: {scenario[:180]}")
+        else:
+            summaries.append(f"- {title}")
+
+    return summaries
+
+
 def load_prompt(topic: str, weekday: str) -> str:
     if not PROMPT_FILE.exists():
         raise SystemExit(f"prompt template missing: {PROMPT_FILE}")
-    return PROMPT_FILE.read_text().replace("{{TOPIC}}", topic).replace(
-        "{{WEEKDAY}}", weekday
+
+    history = recent_challenges()
+    recent_block = (
+        "\n".join(history)
+        if history
+        else "(none yet — this is the first challenge in the series)"
+    )
+
+    return (
+        PROMPT_FILE.read_text()
+        .replace("{{TOPIC}}", topic)
+        .replace("{{WEEKDAY}}", weekday)
+        .replace("{{RECENT}}", recent_block)
     )
 
 
@@ -188,7 +239,12 @@ def main() -> int:
         print(f"{target.relative_to(ROOT)} already exists — nothing to do")
         return 0
 
-    print(f"generating: {date_str} ({weekday}) — {topic}", file=sys.stderr)
+    history_count = len(recent_challenges())
+    print(
+        f"generating: {date_str} ({weekday}) — {topic} "
+        f"[avoiding {history_count} previous]",
+        file=sys.stderr,
+    )
     body = call_gemini(load_prompt(topic, weekday), args.model, api_key)
 
     document = (

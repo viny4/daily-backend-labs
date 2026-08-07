@@ -41,7 +41,34 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Cheap checks first. A re-run should not spend Gemini quota only to
+      # discover further down that today's challenge already exists.
+      - name: Skip if today is already open or merged
+        id: guard
+        env:
+          # Honour the manual override, else today in IST — matching how the
+          # generator itself resolves the date.
+          DATE_INPUT: ${{ inputs.date }}
+        run: |
+          DATE="${DATE_INPUT:-$(TZ=Asia/Kolkata date +%F)}"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+          if [ -f "challenges/$DATE.md" ]; then
+            echo "already merged into main"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "challenge/$DATE" >/dev/null 2>&1; then
+            echo "branch challenge/$DATE already open"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
       - name: Generate today's challenge
+        if: steps.guard.outputs.skip == 'false'
         id: generate
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -52,7 +79,7 @@ jobs:
             ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
 
       - name: Open a pull request
-        if: steps.generate.outputs.date != ''
+        if: steps.guard.outputs.skip == 'false' && steps.generate.outputs.date != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DATE: ${{ steps.generate.outputs.date }}
@@ -60,7 +87,8 @@ jobs:
         run: |
           BRANCH="challenge/$DATE"
 
-          # If the branch already exists, today's challenge is already open.
+          # Re-checked here as well: the guard step ran minutes ago, and a
+          # manual dispatch could have raced this scheduled run in between.
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
             echo "$BRANCH already exists — nothing to do"
             exit 0
