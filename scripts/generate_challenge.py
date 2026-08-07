@@ -75,7 +75,12 @@ def call_gemini(prompt: str, model: str, api_key: str) -> str:
                 # Some variety day to day, but not so much that it drifts
                 # off-topic or starts inventing formats.
                 "temperature": 0.9,
-                "maxOutputTokens": 2048,
+                # 2.5-era models spend output budget on internal reasoning, so
+                # a modest cap silently truncates the visible answer. Writing a
+                # challenge needs no deliberation, so switch thinking off and
+                # give the text room.
+                "maxOutputTokens": 4096,
+                "thinkingConfig": {"thinkingBudget": 0},
             },
         }
     ).encode()
@@ -114,12 +119,20 @@ def call_gemini(prompt: str, model: str, api_key: str) -> str:
         # Usually means the prompt tripped a safety filter.
         raise SystemExit(f"no candidates returned:\n{json.dumps(payload, indent=2)[:800]}")
 
+    finish = candidates[0].get("finishReason", "")
     parts = candidates[0].get("content", {}).get("parts") or []
     text = "".join(part.get("text", "") for part in parts).strip()
 
     if not text:
-        finish = candidates[0].get("finishReason", "unknown")
         raise SystemExit(f"empty response (finishReason={finish})")
+
+    # Never write a half-finished challenge. A truncated scenario reads as a
+    # broken repository, and the failure is silent otherwise.
+    if finish == "MAX_TOKENS":
+        raise SystemExit(
+            "response hit the output limit and would be truncated mid-sentence.\n"
+            "Raise maxOutputTokens, or confirm thinkingBudget is 0 for this model."
+        )
 
     return text
 
