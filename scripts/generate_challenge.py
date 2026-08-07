@@ -36,8 +36,11 @@ TIMEZONE = ZoneInfo("Asia/Kolkata")
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
 
 # Model id is configurable because Google retires and renames these. If the call
-# 404s, run --list-models to see what your key actually has access to.
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# 404s, the available models are printed automatically.
+#
+# `or` rather than a get() default: an unset GitHub Actions variable arrives as
+# an empty string, not an absent key, and "" would otherwise win over the default.
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL") or "gemini-2.5-flash"
 
 # Monday-first, matching datetime.weekday().
 WEEKLY_TOPICS = {
@@ -87,10 +90,16 @@ def call_gemini(prompt: str, model: str, api_key: str) -> str:
     except urllib.error.HTTPError as error:
         detail = error.read().decode(errors="replace")[:600]
         if error.code == 404:
+            print(
+                f"model {model!r} not found (HTTP 404). Models this key can use:",
+                file=sys.stderr,
+            )
+            try:
+                list_models(api_key)
+            except SystemExit:
+                print("  (could not list models)", file=sys.stderr)
             raise SystemExit(
-                f"model {model!r} not found (HTTP 404).\n"
-                f"Run: python scripts/generate_challenge.py --list-models\n"
-                f"then set GEMINI_MODEL to one of the listed ids.\n\n{detail}"
+                "Set the GEMINI_MODEL repository variable to one of the ids above."
             ) from error
         if error.code in (401, 403):
             raise SystemExit(
