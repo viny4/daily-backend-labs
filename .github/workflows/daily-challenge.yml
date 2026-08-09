@@ -1,0 +1,122 @@
+name: Daily challenge
+
+# Generates one backend challenge each morning and opens it as a pull request.
+#
+# The bot writes the QUESTION. You write the ANSWER. That split is the whole
+# design: the PR here is authored by github-actions[bot] and does not appear on
+# anyone's contribution graph. The commits that do count are the ones you make
+# when you solve it — which is correct, because those are the ones that
+# represent work someone actually did.
+
+on:
+  schedule:
+    # 03:30 UTC = 09:00 IST. GitHub's scheduler is best-effort and can lag
+    # under load, so treat this as "some time in the morning", not 09:00 sharp.
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+    inputs:
+      topic:
+        description: "Override the weekday topic (optional)"
+        required: false
+      date:
+        description: "YYYY-MM-DD (optional, defaults to today IST)"
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: daily-challenge
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Cheap checks first. A re-run should not spend Gemini quota only to
+      # discover further down that today's challenge already exists.
+      - name: Skip if today is already open or merged
+        id: guard
+        env:
+          # Honour the manual override, else today in IST — matching how the
+          # generator itself resolves the date.
+          DATE_INPUT: ${{ inputs.date }}
+        run: |
+          DATE="${DATE_INPUT:-$(TZ=Asia/Kolkata date +%F)}"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+          if [ -f "challenges/$DATE.md" ]; then
+            echo "already merged into main"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if git ls-remote --exit-code --heads origin "challenge/$DATE" >/dev/null 2>&1; then
+            echo "branch challenge/$DATE already open"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Generate today's challenge
+        if: steps.guard.outputs.skip == 'false'
+        id: generate
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+        run: |
+          python scripts/generate_challenge.py \
+            ${{ inputs.topic && format('--topic "{0}"', inputs.topic) || '' }} \
+            ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
+
+      - name: Open a pull request
+        if: steps.guard.outputs.skip == 'false' && steps.generate.outputs.date != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DATE: ${{ steps.generate.outputs.date }}
+          TOPIC: ${{ steps.generate.outputs.topic }}
+        run: |
+          BRANCH="challenge/$DATE"
+
+          # Re-checked here as well: the guard step ran minutes ago, and a
+          # manual dispatch could have raced this scheduled run in between.
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            echo "$BRANCH already exists — nothing to do"
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          git add challenges/
+          git commit -m "Add challenge for $DATE ($TOPIC)"
+          git push -u origin "$BRANCH"
+
+          gh pr create \
+            --title "$DATE — $TOPIC" \
+            --body "$(cat <<EOF
+          Today's challenge: \`challenges/$DATE.md\`
+
+          **To complete it:**
+
+          1. \`gh pr checkout $BRANCH\`
+          2. Solve it under \`solutions/$DATE/\`
+          3. Fill in the *Approach* / *What I learned* sections in the challenge file
+          4. Commit your solution, then merge
+
+          Leave it unmerged if you skip a day — an honest gap beats a fake square.
+          EOF
+          )" \
+            --head "$BRANCH" \
+            --base main \
+            --label "challenge"
