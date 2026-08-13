@@ -1,12 +1,15 @@
 name: Daily challenge
 
-# Generates one backend challenge each morning and opens it as a pull request.
+# Generates one backend challenge each morning, answers it, and opens both as a
+# pull request.
 #
-# The bot writes the QUESTION. You write the ANSWER. That split is the whole
-# design: the PR here is authored by github-actions[bot] and does not appear on
-# anyone's contribution graph. The commits that do count are the ones you make
-# when you solve it — which is correct, because those are the ones that
-# represent work someone actually did.
+# Two API calls, not one: the question is written first, then handed to a second
+# call that has to solve it. Asking for both at once produces a question shaped
+# around a convenient answer, which is the wrong way round — the question should
+# come from the scenario, and the answer should have to deal with it.
+#
+# Review the answer before merging. It is generated, so it is occasionally
+# confidently wrong, and the whole point is that people read it to learn.
 
 on:
   schedule:
@@ -36,6 +39,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      # The "do not repeat" history is built from challenge files, and an
+      # unmerged challenge exists only on its own branch. Without these refs the
+      # model only ever sees the merged ones, so every skipped day is a day it
+      # can reissue. One shallow fetch, no API cost.
+      - name: Fetch open challenge branches
+        run: |
+          git fetch --depth=1 origin \
+            "refs/heads/challenge/*:refs/remotes/origin/challenge/*" || true
 
       - uses: actions/setup-python@v5
         with:
@@ -73,10 +85,17 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          # Through the environment, not ${{ }} interpolation: expanding a
+          # dispatch input straight into the script would let the topic field
+          # run shell.
+          TOPIC_INPUT: ${{ inputs.topic }}
+          DATE_INPUT: ${{ inputs.date }}
         run: |
-          python scripts/generate_challenge.py \
-            ${{ inputs.topic && format('--topic "{0}"', inputs.topic) || '' }} \
-            ${{ inputs.date && format('--date {0}', inputs.date) || '' }}
+          args=()
+          if [ -n "$TOPIC_INPUT" ]; then args+=(--topic "$TOPIC_INPUT"); fi
+          if [ -n "$DATE_INPUT" ]; then args+=(--date "$DATE_INPUT"); fi
+
+          python scripts/generate_challenge.py "${args[@]}"
 
       - name: Open a pull request
         if: steps.guard.outputs.skip == 'false' && steps.generate.outputs.date != ''
@@ -105,16 +124,15 @@ jobs:
           gh pr create \
             --title "$DATE — $TOPIC" \
             --body "$(cat <<EOF
-          Today's challenge: \`challenges/$DATE.md\`
+          Today's challenge and its worked answer: \`challenges/$DATE.md\`
 
-          **To complete it:**
+          Read the question first, have a go at it yourself, then read the answer
+          below it.
 
-          1. \`gh pr checkout $BRANCH\`
-          2. Solve it under \`solutions/$DATE/\`
-          3. Fill in the *Approach* / *What I learned* sections in the challenge file
-          4. Commit your solution, then merge
-
-          Leave it unmerged if you skip a day — an honest gap beats a fake square.
+          **Before merging:** skim the answer. It is generated, so check that it
+          actually addresses every deliverable and that the code in it is right.
+          If it is wrong, fix it in this branch — a wrong answer published is
+          worse than no answer.
           EOF
           )" \
             --head "$BRANCH" \

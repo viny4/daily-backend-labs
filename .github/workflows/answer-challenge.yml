@@ -1,0 +1,73 @@
+name: Answer a challenge
+
+# Writes the worked answer onto an existing challenge branch and pushes it to
+# the open PR.
+#
+# Needed because challenges generated before answers were part of the flow have
+# a question and nothing else. Also the way to redo an answer that came back
+# wrong: it replaces the existing one rather than appending a second.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "YYYY-MM-DD of the challenge to answer"
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  # Per date — answering 2026-08-10 and 2026-08-11 at once is fine, but two runs
+  # against the same branch would race on the push.
+  group: answer-challenge-${{ inputs.date }}
+  cancel-in-progress: false
+
+jobs:
+  answer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: challenge/${{ inputs.date }}
+          # Needs main as well as the branch, see the next step.
+          fetch-depth: 0
+
+      # Challenge branches were cut before answers existed, so the generator on
+      # them has no --answer mode. Take the tooling from main and leave the
+      # branch's own content alone.
+      #
+      # Unstaged again immediately: the index is what gets committed, and this
+      # commit must contain the answer and nothing else.
+      - name: Use the generator from the default branch
+        run: |
+          git checkout origin/main -- scripts prompts
+          git restore --staged scripts prompts
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Write the answer
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          DATE_INPUT: ${{ inputs.date }}
+        run: python scripts/generate_challenge.py --answer --date "$DATE_INPUT"
+
+      - name: Push it to the branch
+        env:
+          DATE_INPUT: ${{ inputs.date }}
+        run: |
+          if git diff --quiet -- challenges/; then
+            echo "no change — the answer is already there"
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add challenges/
+          git commit -m "Add the worked answer for $DATE_INPUT"
+          git push origin "HEAD:challenge/$DATE_INPUT"

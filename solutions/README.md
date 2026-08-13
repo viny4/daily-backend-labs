@@ -1,6 +1,11 @@
 # Solutions
 
-One directory per day, matching the challenge date.
+Optional. The worked answer to each challenge lives in the challenge file
+itself, under `challenges/YYYY-MM-DD.md`, so nothing has to go here.
+
+This is for when you actually work one through and want the code to run —
+a schema you loaded, a benchmark you took, an approach that differs from the
+published answer. One directory per day, matching the challenge date.
 
 ```
 solutions/2026-08-07/
@@ -8,7 +13,3 @@ solutions/2026-08-07/
 ├── notes.md
 └── benchmark.py
 ```
-
-Use whatever files the problem calls for — SQL, TypeScript, Python, a diagram,
-a plain-text argument. The write-up in the challenge file is the part that
-matters most: *why* this approach, and what breaks at scale.
