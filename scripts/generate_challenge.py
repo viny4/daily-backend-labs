@@ -388,8 +388,12 @@ def main() -> int:
         api_key,
         # The answer is a reference document, not a brainstorm: run it colder,
         # and give it room for the code it has to carry.
+        #
+        # 16k rather than 8k because a system design answer covers four
+        # deliverables plus the "going further" question and overran 8k — the
+        # truncation guard caught it, but a failed run is still a lost day.
         temperature=0.4,
-        max_output_tokens=8192,
+        max_output_tokens=16384,
     )
 
     document = render(question, solution)
