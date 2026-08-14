@@ -69,10 +69,12 @@ answer — fix it in the branch before merging.
 
 ## Answering a challenge that has none
 
-Days generated before answers were part of the flow have a question and nothing
-else. **Actions → Answer a challenge → Run workflow**, give it the date, and it
-writes the answer onto that branch and pushes it to the open PR. The same
-workflow replaces an answer that came back wrong.
+**Actions → Answer a challenge → Run workflow**, give it one date or several
+separated by spaces. It writes the answers and opens a single PR.
+
+For days generated before answers were part of the daily run, and for replacing
+an answer that came back wrong — it overwrites the existing one rather than
+adding a second below it.
 
 ## Running it manually
 
