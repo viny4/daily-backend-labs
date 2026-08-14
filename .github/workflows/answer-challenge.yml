@@ -43,9 +43,18 @@ jobs:
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           DATES_INPUT: ${{ inputs.dates }}
         run: |
+          # Keep going past a date that fails. The answers already written are
+          # worth committing, and losing three because the fourth timed out is
+          # how the first attempt at this went.
+          failed=""
           for date in $DATES_INPUT; do
-            python scripts/generate_challenge.py --answer --date "$date"
+            python scripts/generate_challenge.py --answer --date "$date" \
+              || failed="$failed $date"
           done
+
+          if [ -n "$failed" ]; then
+            echo "::warning::no answer written for:$failed — re-run for those dates"
+          fi
 
       - name: Open a pull request
         env:
