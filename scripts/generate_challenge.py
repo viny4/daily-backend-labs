@@ -26,6 +26,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -222,6 +223,10 @@ def call_gemini(
     api_key: str,
     temperature: float = 0.9,
     max_output_tokens: int = 4096,
+    # A long answer can take well over a minute to come back. The old 60s was
+    # tuned for questions and cut answers off mid-stream.
+    timeout: int = 240,
+    attempts: int = 3,
 ) -> str:
     url = f"{API_ROOT}/models/{model}:generateContent?key={api_key}"
     body = json.dumps(
@@ -245,30 +250,26 @@ def call_gemini(
         url, data=body, headers={"Content-Type": "application/json"}
     )
 
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            payload = json.load(response)
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode(errors="replace")[:600]
-        if error.code == 404:
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                payload = json.load(response)
+            break
+        except urllib.error.HTTPError as error:
+            handle_http_error(error, model, api_key)  # always raises
+        # A read that times out part-way through is transient, and losing the
+        # whole run to it means losing the day. HTTPError is a subclass of
+        # URLError, so it has to be caught above this.
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            if attempt == attempts:
+                raise SystemExit(
+                    f"could not reach the Gemini API after {attempts} attempts: {error}"
+                ) from error
             print(
-                f"model {model!r} not found (HTTP 404). Models this key can use:",
+                f"  attempt {attempt}/{attempts} failed ({error}) — retrying",
                 file=sys.stderr,
             )
-            try:
-                list_models(api_key)
-            except SystemExit:
-                print("  (could not list models)", file=sys.stderr)
-            raise SystemExit(
-                "Set the GEMINI_MODEL repository variable to one of the ids above."
-            ) from error
-        if error.code in (401, 403):
-            raise SystemExit(
-                f"auth failed (HTTP {error.code}). Check GEMINI_API_KEY.\n\n{detail}"
-            ) from error
-        raise SystemExit(f"Gemini API error {error.code}:\n{detail}") from error
-    except urllib.error.URLError as error:
-        raise SystemExit(f"could not reach the Gemini API: {error.reason}") from error
+            time.sleep(5 * attempt)
 
     candidates = payload.get("candidates") or []
     if not candidates:
@@ -291,6 +292,32 @@ def call_gemini(
         )
 
     return text
+
+
+def handle_http_error(error: urllib.error.HTTPError, model: str, api_key: str) -> None:
+    """Always raises. Every HTTP error here is terminal — a wrong model id or a
+    bad key does not start working on the second attempt."""
+    detail = error.read().decode(errors="replace")[:600]
+
+    if error.code == 404:
+        print(
+            f"model {model!r} not found (HTTP 404). Models this key can use:",
+            file=sys.stderr,
+        )
+        try:
+            list_models(api_key)
+        except SystemExit:
+            print("  (could not list models)", file=sys.stderr)
+        raise SystemExit(
+            "Set the GEMINI_MODEL repository variable to one of the ids above."
+        ) from error
+
+    if error.code in (401, 403):
+        raise SystemExit(
+            f"auth failed (HTTP {error.code}). Check GEMINI_API_KEY.\n\n{detail}"
+        ) from error
+
+    raise SystemExit(f"Gemini API error {error.code}:\n{detail}") from error
 
 
 def list_models(api_key: str) -> int:
