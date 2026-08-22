@@ -256,6 +256,21 @@ def call_gemini(
                 payload = json.load(response)
             break
         except urllib.error.HTTPError as error:
+            # 429 and 5xx mean the API is busy, not that the request is wrong.
+            # 2026-08-19 was lost to a 503 because every HTTP code was treated
+            # as terminal here.
+            if error.code == 429 or error.code >= 500:
+                if attempt == attempts:
+                    raise SystemExit(
+                        f"Gemini API still returning HTTP {error.code} after "
+                        f"{attempts} attempts"
+                    ) from error
+                print(
+                    f"  attempt {attempt}/{attempts} got HTTP {error.code} — retrying",
+                    file=sys.stderr,
+                )
+                time.sleep(5 * attempt)
+                continue
             handle_http_error(error, model, api_key)  # always raises
         # A read that times out part-way through is transient, and losing the
         # whole run to it means losing the day. HTTPError is a subclass of
