@@ -217,6 +217,11 @@ def render(question: str, solution: str) -> str:
     )
 
 
+def backoff(attempt: int) -> int:
+    """5, 10, 20, 40, 60 — exponential, capped so a retry never stalls the job."""
+    return min(60, 5 * 2 ** (attempt - 1))
+
+
 def call_gemini(
     prompt: str,
     model: str,
@@ -226,7 +231,10 @@ def call_gemini(
     # A long answer can take well over a minute to come back. The old 60s was
     # tuned for questions and cut answers off mid-stream.
     timeout: int = 240,
-    attempts: int = 3,
+    # 503 from Gemini means overloaded, and it can stay that way for minutes.
+    # Three tries over fifteen seconds lost 2026-08-30 and 2026-09-08; this
+    # backs off to roughly two and a half minutes before giving up.
+    attempts: int = 5,
 ) -> str:
     url = f"{API_ROOT}/models/{model}:generateContent?key={api_key}"
     body = json.dumps(
@@ -269,7 +277,7 @@ def call_gemini(
                     f"  attempt {attempt}/{attempts} got HTTP {error.code} — retrying",
                     file=sys.stderr,
                 )
-                time.sleep(5 * attempt)
+                time.sleep(backoff(attempt))
                 continue
             handle_http_error(error, model, api_key)  # always raises
         # A read that times out part-way through is transient, and losing the
@@ -284,7 +292,7 @@ def call_gemini(
                 f"  attempt {attempt}/{attempts} failed ({error}) — retrying",
                 file=sys.stderr,
             )
-            time.sleep(5 * attempt)
+            time.sleep(backoff(attempt))
 
     candidates = payload.get("candidates") or []
     if not candidates:
