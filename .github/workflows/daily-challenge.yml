@@ -1,15 +1,16 @@
 name: Daily challenge
 
-# Generates one backend challenge each morning, answers it, and opens both as a
-# pull request.
+# Generates one backend challenge each morning, answers it, and commits both
+# straight to main.
 #
 # Two API calls, not one: the question is written first, then handed to a second
 # call that has to solve it. Asking for both at once produces a question shaped
 # around a convenient answer, which is the wrong way round — the question should
 # come from the scenario, and the answer should have to deal with it.
 #
-# Review the answer before merging. It is generated, so it is occasionally
-# confidently wrong, and the whole point is that people read it to learn.
+# No pull request. Nothing gates the answer any more, so nobody reviews it
+# before it is public — and it is generated, so it is occasionally confidently
+# wrong. Read the day's file when you sit down to it, and fix what is wrong.
 
 on:
   schedule:
@@ -27,7 +28,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: daily-challenge
@@ -40,22 +40,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The "do not repeat" history is built from challenge files, and an
-      # unmerged challenge exists only on its own branch. Without these refs the
-      # model only ever sees the merged ones, so every skipped day is a day it
-      # can reissue. One shallow fetch, no API cost.
-      - name: Fetch open challenge branches
-        run: |
-          git fetch --depth=1 origin \
-            "refs/heads/challenge/*:refs/remotes/origin/challenge/*" || true
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      # Cheap checks first. A re-run should not spend Gemini quota only to
-      # discover further down that today's challenge already exists.
-      - name: Skip if today is already open or merged
+      # Cheap check first. A re-run should not spend Gemini quota only to
+      # discover further down that today's challenge is already committed.
+      - name: Skip if today is already on main
         id: guard
         env:
           # Honour the manual override, else today in IST — matching how the
@@ -66,20 +57,13 @@ jobs:
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
 
           if [ -f "challenges/$DATE.md" ]; then
-            echo "already merged into main"
+            echo "challenges/$DATE.md already exists — nothing to do"
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-          if git ls-remote --exit-code --heads origin "challenge/$DATE" >/dev/null 2>&1; then
-            echo "branch challenge/$DATE already open"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-
-      - name: Generate today's challenge
+      - name: Generate today's challenge and answer
         if: steps.guard.outputs.skip == 'false'
         id: generate
         env:
@@ -97,44 +81,24 @@ jobs:
 
           python scripts/generate_challenge.py "${args[@]}"
 
-      - name: Open a pull request
+      - name: Commit it to main
         if: steps.guard.outputs.skip == 'false' && steps.generate.outputs.date != ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DATE: ${{ steps.generate.outputs.date }}
           TOPIC: ${{ steps.generate.outputs.topic }}
         run: |
-          BRANCH="challenge/$DATE"
-
-          # Re-checked here as well: the guard step ran minutes ago, and a
-          # manual dispatch could have raced this scheduled run in between.
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            echo "$BRANCH already exists — nothing to do"
+          if git diff --quiet -- challenges/; then
+            echo "nothing changed — not committing"
             exit 0
           fi
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git checkout -b "$BRANCH"
           git add challenges/
           git commit -m "Add challenge for $DATE ($TOPIC)"
-          git push -u origin "$BRANCH"
 
-          gh pr create \
-            --title "$DATE — $TOPIC" \
-            --body "$(cat <<EOF
-          Today's challenge and its worked answer: \`challenges/$DATE.md\`
-
-          Read the question first, have a go at it yourself, then read the answer
-          below it.
-
-          **Before merging:** skim the answer. It is generated, so check that it
-          actually addresses every deliverable and that the code in it is right.
-          If it is wrong, fix it in this branch — a wrong answer published is
-          worse than no answer.
-          EOF
-          )" \
-            --head "$BRANCH" \
-            --base main \
-            --label "challenge"
+          # main may have moved while the two API calls were running. Rebase
+          # rather than force: this job is never the only thing pushing here.
+          git pull --rebase --autostash origin main
+          git push origin HEAD:main
