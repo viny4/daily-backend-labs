@@ -439,11 +439,13 @@ def main() -> int:
         # The answer is a reference document, not a brainstorm: run it colder,
         # and give it room for the code it has to carry.
         #
-        # 16k rather than 8k because a system design answer covers four
-        # deliverables plus the "going further" question and overran 8k — the
-        # truncation guard caught it, but a failed run is still a lost day.
+        # Raised twice now: 8k, then 16k, and 2026-09-14 and 2026-09-17 still
+        # overran. Answers run long when a scenario has four deliverables and
+        # real code in each — one recent answer came to 1289 lines. 32k leaves
+        # headroom, and the truncation guard below still refuses to publish an
+        # answer that got cut off.
         temperature=0.4,
-        max_output_tokens=16384,
+        max_output_tokens=32768,
     )
 
     document = render(question, solution)
