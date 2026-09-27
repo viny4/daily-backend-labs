@@ -87,15 +87,19 @@ jobs:
           DATE: ${{ steps.generate.outputs.date }}
           TOPIC: ${{ steps.generate.outputs.topic }}
         run: |
-          if git diff --quiet -- challenges/; then
-            echo "nothing changed — not committing"
-            exit 0
-          fi
-
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # Stage first, then ask the index. A new challenge file is untracked,
+          # and `git diff` does not see untracked files — checking the worktree
+          # here reported "nothing changed" and silently dropped the challenge.
           git add challenges/
+
+          if git diff --cached --quiet -- challenges/; then
+            echo "nothing staged — not committing"
+            exit 0
+          fi
+
           git commit -m "Add challenge for $DATE ($TOPIC)"
 
           # main may have moved while the two API calls were running. Rebase
